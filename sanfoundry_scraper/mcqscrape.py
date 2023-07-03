@@ -1,11 +1,13 @@
-import bs4
-from .pagescrape import pagescrape
+import re
+from .pagescrape import pagescrape, get_html
 import os
-import requests
 from bs4 import BeautifulSoup
+import json
+
+HTML_PARSE_FORMAT = 'html.parser'
 
 
-def write_to_html(data: BeautifulSoup, filename):
+def write_to_html(data: BeautifulSoup, filename, path):
     if not os.path.exists("Saved_MCQs"):
         os.mkdir("Saved_MCQs")
     # add mathjax
@@ -32,59 +34,53 @@ def write_to_html(data: BeautifulSoup, filename):
     </head>""", "lxml")
     data.body.insert_before(head)
     # print(data)
-    with open(f"./Saved_MCQs/{filename}.html", "w+", encoding="utf-8") as file:
+    with open(f"{path}/{filename}.html", "w+", encoding="utf-8") as file:
         file.write(str(data.prettify()))
 
 
-def mcqscrape_json(url: str):
+def write_to_json(data: list, path):
+    with open(f"{path}/questions.json", 'w+') as f:
+        json.dump({"questions": data}, f)
+
+
+def mcqscrape_json(url: str) -> list:
     # print(title)
     mcqs = []
-    res = requests.get(url)
-    soup = BeautifulSoup(res.content, 'lxml')
-    content = soup.find('div', 'entry-content')
-    paras = content.findAll('p')
-    header = paras[0].text
-    print(header)
-    each = ''
+    res = get_html(url)
+    _soup = BeautifulSoup(res, HTML_PARSE_FORMAT)
+
     try:
-        for each in paras[1:-3]:
-            answerid = each.span['id']
-            answer_div = content.find('div', id='target-'+answerid)
-            # decompose span
-            each.span.decompose()
-            # print(repr(each.text))
-            question = each.text.split("\n")[0].split(".", 1)[-1].strip()
-            options = [option.split(')', 1)[-1].strip()
-                       for option in each.text.split('\n')[1:] if option != '']
-            # print(repr(answer_div.text))
-            answer = answer_div.text.split('\n', 1)[0].strip('Answer: ')
-            explanation = answer_div.text.split('\n', 1)[1].strip()
-            # print(answer)
-            question_dict = {
-                "question": question,
-                "options": options,
-                "answer": answer,
-                "explanation": explanation
-            }
-            mcqs.append(question_dict)
+        main_content = [x for x in _soup.find(
+            "div", {"class": "entry-content"}).findAll('p') if re.search(r'\d\. .*', x.text)][0]
+
+        split_content = ['<p>' + x for x in str(main_content).split('<p>')]
+
+        for x in split_content:
+            if re.search(r'<span', x):
+                question_dict = {
+                    "q": BeautifulSoup(x.split('<span')[0], HTML_PARSE_FORMAT).find('p').text,
+                    "a": BeautifulSoup(x.split('<span')[1], HTML_PARSE_FORMAT).find('div').text
+                }
+                mcqs.append(question_dict)
+
     except Exception as err:
-        print("current iteration has ", each)
         print("Error: ", err)
+
     return mcqs
 
 
-def mcqscrape_html(url: str) -> str:
+def mcqscrape_html(url: str, path: str) -> str:
     if '1000' in url:
-        pages = pagescrape(url)
+        pages = pagescrape(url, path)
         mega_html = ''
         for k, v in pages.items():
             print("getting", k, "from ->", v, end=' ... ')
-            mega_html += mcqscrape_html(v)
+            mega_html += mcqscrape_html(v, path)
             print("Done!")
         write_to_html(BeautifulSoup(mega_html, 'lxml'),
-                      url.split('/')[-2])
-    res = requests.get(url)
-    soup = BeautifulSoup(res.content, 'lxml')
+                      url.split('/')[-2], path)
+    res = get_html(url)
+    soup = BeautifulSoup(res, 'lxml')
     content = soup.find('div', class_='entry-content')
     # print(content.prettify())
     paras = content.findAll('p')
@@ -115,5 +111,3 @@ def mcqscrape_html(url: str) -> str:
         print(str(content)[:100])
         return ''
     return content.prettify()
-
-
